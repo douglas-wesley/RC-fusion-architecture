@@ -6,7 +6,7 @@
 # ── Dataset ──────────────────────────────────────────────────────────────────
 data:
   dataroot: "./data/sets/nuscenes"       # Local (padrao)
-  dataroot: "/content/data/sets/nuscenes"  # Colab (descomente aqui)
+  # dataroot: "/content/data/sets/nuscenes"  # Colab (ou passe via argumento --dataroot)
   version: "v1.0-mini"
   num_workers: 4
   pin_memory: true
@@ -81,12 +81,12 @@ training:
 
   # Checkpoints
   checkpoint_dir: "./checkpoints"        # Local
-  checkpoint_dir: "/content/drive/MyDrive/PIBIC/fusion/checkpoints"  # Colab
+  # checkpoint_dir: "/content/drive/MyDrive/PIBIC/fusion/checkpoints"  # Colab
   save_every_n_epochs: 5
 
   # Logging
   log_dir: "./logs"                      # Local
-  log_dir: "/content/drive/MyDrive/PIBIC/fusion/logs"  # Colab
+  # log_dir: "/content/drive/MyDrive/PIBIC/fusion/logs"  # Colab
   use_tensorboard: true
 
 # ── Inferencia ───────────────────────────────────────────────────────────────
