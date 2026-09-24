@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.dataset.nuscenes_dataset import NuScenesFusionDataset, collate_fn
 from src.dataset.radar_transforms import radar_to_bev_grid
 from src.models.detector import BEVFusionDetector
-from src.engine.train import load_config, build_model
+from src.engine.train import load_config, build_model, load_checkpoint
 
 
 class BEVMetrics:
