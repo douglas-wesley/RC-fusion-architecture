@@ -342,7 +342,10 @@ def train(config_path: str, dataroot: Optional[str] = None):
 
     # AMP scaler
     use_amp = cfg["training"]["use_amp"] and device.type == "cuda"
-    scaler = GradScaler(enabled=use_amp)
+    if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+        scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    else:
+        scaler = GradScaler(enabled=use_amp)
 
     # TensorBoard (opcional, com fallback seguro caso o ambiente tenha conflito TensorFlow/JAX)
     writer = None

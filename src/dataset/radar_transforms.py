@@ -37,8 +37,9 @@ def radar_to_bev_grid(
     """
     bev_h, bev_w = bev_size
     bev_min, bev_max = bev_range
+    device = radar_points.device
 
-    grid = torch.zeros((n_channels, bev_h, bev_w), dtype=torch.float32)
+    grid = torch.zeros((n_channels, bev_h, bev_w), dtype=torch.float32, device=device)
 
     # Obter indices dos pontos validos
     valid = radar_mask > 0.5
@@ -74,24 +75,24 @@ def radar_to_bev_grid(
     # ── Canal 0: Densidade ──────────────────────────────────────────────
     # Contar quantos pontos caem em cada celula
     indices = row * bev_w + col
-    density = torch.zeros(bev_h * bev_w, dtype=torch.float32)
-    density.scatter_add_(0, indices, torch.ones_like(indices, dtype=torch.float32))
+    density = torch.zeros(bev_h * bev_w, dtype=torch.float32, device=device)
+    density.scatter_add_(0, indices, torch.ones_like(indices, dtype=torch.float32, device=device))
     grid[0] = density.view(bev_h, bev_w)
 
     # ── Canal 1: RCS medio ──────────────────────────────────────────────
-    rcs_sum = torch.zeros(bev_h * bev_w, dtype=torch.float32)
+    rcs_sum = torch.zeros(bev_h * bev_w, dtype=torch.float32, device=device)
     rcs_sum.scatter_add_(0, indices, rcs_valid)
     rcs_count = grid[0].view(-1).clone()
     rcs_count[rcs_count == 0] = 1.0  # evitar divisao por zero
     grid[1] = (rcs_sum / rcs_count).view(bev_h, bev_w)
 
     # ── Canal 2: Velocidade X media ────────────────────────────────────
-    vx_sum = torch.zeros(bev_h * bev_w, dtype=torch.float32)
+    vx_sum = torch.zeros(bev_h * bev_w, dtype=torch.float32, device=device)
     vx_sum.scatter_add_(0, indices, vx_valid)
     grid[2] = (vx_sum / rcs_count).view(bev_h, bev_w)
 
     # ── Canal 3: Velocidade Y media ────────────────────────────────────
-    vy_sum = torch.zeros(bev_h * bev_w, dtype=torch.float32)
+    vy_sum = torch.zeros(bev_h * bev_w, dtype=torch.float32, device=device)
     vy_sum.scatter_add_(0, indices, vy_valid)
     grid[3] = (vy_sum / rcs_count).view(bev_h, bev_w)
 
