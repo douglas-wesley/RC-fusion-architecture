@@ -1,0 +1,21 @@
+# =============================================================================
+# Fusion — Dependencias (Google Colab)
+# =============================================================================
+# Para instalar no Colab: pip install -r requirements_colab.txt
+# NOTA: Colab ja tem torch/torchvision instalados. Este arquivo
+#       instala APENAS as dependencias adicionais.
+
+# ── nuScenes ─────────────────────────────────────────────────────────────────
+nuscenes-devkit>=1.1.0
+
+# ── Utilidades ───────────────────────────────────────────────────────────────
+numpy>=1.24.0
+opencv-python>=4.8.0
+einops>=0.6.0
+pyyaml>=6.0
+tqdm>=4.65.0
+matplotlib>=3.7.0
+
+# ── Treinamento ──────────────────────────────────────────────────────────────
+tensorboard>=2.14.0
+pycocotools>=2.0.6

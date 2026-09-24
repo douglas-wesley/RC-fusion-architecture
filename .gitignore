@@ -1,0 +1,44 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# ── Ambiente Virtual ─────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+.env
+
+# ── IDEs ─────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Dados (grandes demais para git) ──────────────────────────────────────────
+data/
+*.tgz
+*.tar.gz
+
+# ── Modelos e Checkpoints ────────────────────────────────────────────────────
+checkpoints/
+*.pth
+*.pt
+*.onnx
+logs/
+runs/
+*.log
+
+# ── Jupyter/Colab ───────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
