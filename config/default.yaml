@@ -8,7 +8,7 @@ data:
   dataroot: "./data/sets/nuscenes"       # Local (padrao)
   # dataroot: "/content/data/sets/nuscenes"  # Colab (ou passe via argumento --dataroot)
   version: "v1.0-mini"
-  num_workers: 4
+  num_workers: 2
   pin_memory: true
 
   # Imagem

@@ -344,13 +344,18 @@ def train(config_path: str, dataroot: Optional[str] = None):
     use_amp = cfg["training"]["use_amp"] and device.type == "cuda"
     scaler = GradScaler(enabled=use_amp)
 
-    # TensorBoard
+    # TensorBoard (opcional, com fallback seguro caso o ambiente tenha conflito TensorFlow/JAX)
     writer = None
     if cfg["training"]["use_tensorboard"]:
-        from torch.utils.tensorboard import SummaryWriter
-        log_dir = cfg["training"]["log_dir"]
-        os.makedirs(log_dir, exist_ok=True)
-        writer = SummaryWriter(log_dir=log_dir)
+        try:
+            from torch.utils.tensorboard import SummaryWriter
+            log_dir = cfg["training"]["log_dir"]
+            os.makedirs(log_dir, exist_ok=True)
+            writer = SummaryWriter(log_dir=log_dir)
+            print(f"TensorBoard ativado em: {log_dir}")
+        except Exception as e:
+            print(f"AVISO: TensorBoard desativado devido a conflito de ambiente: {e}")
+            writer = None
 
     # Checkpoint dir
     ckpt_dir = cfg["training"]["checkpoint_dir"]
