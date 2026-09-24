@@ -23,6 +23,12 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from pyquaternion import Quaternion
+import sys
+from unittest.mock import MagicMock
+
+# Evitar que nuscenes.nuscenes tente importar sklearn.metrics no Python 3.13 do Colab
+for _mod in ["sklearn", "sklearn.metrics", "sklearn.base", "sklearn.utils"]:
+    sys.modules.setdefault(_mod, MagicMock())
 
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.data_classes import RadarPointCloud, Box
