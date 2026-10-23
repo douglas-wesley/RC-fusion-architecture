@@ -2,14 +2,18 @@
 # Fusion — Dependencias (Google Colab)
 # =============================================================================
 # Para instalar no Colab: pip install -r requirements_colab.txt
-# NOTA: Colab ja tem torch/torchvision instalados. Este arquivo
-#       instala APENAS as dependencias adicionais.
+# NOTA: Fixamos numpy<2 e shapely compativel para evitar o conflito do nuscenes-devkit
+#       com as dependencias modernas do Colab.
+
+# ── Versoes compativeis com nuscenes-devkit e PyTorch no Colab ───────────────
+numpy==1.26.4
+shapely==2.0.3
+parameterized
 
 # ── nuScenes ─────────────────────────────────────────────────────────────────
-nuscenes-devkit>=1.1.0
+nuscenes-devkit>=1.1.10
 
 # ── Utilidades ───────────────────────────────────────────────────────────────
-numpy>=1.24.0
 opencv-python>=4.8.0
 einops>=0.6.0
 pyyaml>=6.0
