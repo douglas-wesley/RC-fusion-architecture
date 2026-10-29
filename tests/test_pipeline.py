@@ -171,11 +171,18 @@ def test_bev_gt(nusc: NuScenes, sample: dict):
 
     from nuscenes.utils.geometry_utils import BoxVisibility
 
+    cam_token = sample["data"]["CAM_FRONT"]
     annotations = nusc.get_sample_data(
-        sample["data"]["CAM_FRONT"],
+        cam_token,
         box_vis_level=BoxVisibility.ANY,
     )
     boxes = annotations[1]
+
+    from pyquaternion import Quaternion
+    sd_rec = nusc.get("sample_data", cam_token)
+    cs_rec = nusc.get("calibrated_sensor", sd_rec["calibrated_sensor_token"])
+    sensor_rot = Quaternion(cs_rec["rotation"])
+    sensor_trans = np.array(cs_rec["translation"])
 
     bev_h, bev_w = 128, 128
     bev_range = (-50.0, 50.0)
@@ -198,9 +205,12 @@ def test_bev_gt(nusc: NuScenes, sample: dict):
             continue
         n_filtered += 1
 
+        box.rotate(sensor_rot)
+        box.translate(sensor_trans)
+
         cx, cy, cz = box.center
-        col = int(((cy - bev_range[0]) / (bev_range[1] - bev_range[0])) * bev_w)
         row = int(((cx - bev_range[0]) / (bev_range[1] - bev_range[0])) * bev_h)
+        col = int(((cy - bev_range[0]) / (bev_range[1] - bev_range[0])) * bev_w)
 
         if 0 <= col < bev_w and 0 <= row < bev_h:
             grid[0, row, col] = 1.0
@@ -278,15 +288,6 @@ def test_dataset_class(dataroot: str):
     print(f"    Total:      ~{(sample['image'].numel() + sample['radar_points'].numel() + sample['bev_segmentation'].numel()) * 4 / 1024:.1f} KB")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Sanity check do pipeline de dados")
-    parser.add_argument(
-        "--dataroot",
-        type=str,
-        default="./data/sets/nuscenes",
-        help="Caminho para o nuScenes dataset",
-    )
-    args = parser.parse_args()
 
 def test_backbone():
     """Testa o ImageBackbone (MobileNetV2)."""
@@ -406,6 +407,50 @@ def test_full_model():
     print("\n  [OK] Modelo completo funcional\n")
 
 
+def test_early_fusion_model():
+    """Testa o modelo EarlyBEVFusionDetector (Early Fusion)."""
+    print("=" * 60)
+    print("  TESTE 10: EarlyBEVFusionDetector (Early Fusion)")
+    print("=" * 60)
+
+    try:
+        import torch
+        from src.models.early_detector import EarlyBEVFusionDetector
+    except ImportError as e:
+        print(f"  [SKIP] Modulo nao encontrado: {e}\n")
+        return
+
+    model = EarlyBEVFusionDetector(
+        image_size=(384, 672),
+        bev_size=(128, 128),
+        pretrained_backbone=False,
+    )
+
+    # Dados sinteticos
+    image = torch.randn(2, 3, 384, 672)
+    radar_bev = torch.randn(2, 4, 128, 128)
+
+    # Forward
+    seg_logits = model(image, radar_bev)
+    seg_pred = model.predict(image, radar_bev, threshold=0.5)
+
+    print(f"  Image:      {image.shape}")
+    print(f"  Radar BEV:  {radar_bev.shape}")
+    print(f"  Seg Logits: {seg_logits.shape}")
+    print(f"  Seg Pred:   {seg_pred.shape}")
+
+    assert seg_logits.shape == (2, 1, 128, 128)
+    assert seg_pred.shape == (2, 1, 128, 128)
+
+    # Parametros
+    params = model.count_parameters()
+    print(f"\n  Parametros por modulo:")
+    for k, v in params.items():
+        print(f"    {k:20s}: {v/1e6:.2f}M")
+
+    print("\n  [OK] Modelo Early Fusion funcional\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Sanity check do pipeline de dados")
     parser.add_argument(
@@ -440,6 +485,7 @@ def main():
     test_view_transformer()
     test_fusion_module()
     test_full_model()
+    test_early_fusion_model()
 
     print("=" * 60)
     print("  TODOS OS TESTES PASSARAM")

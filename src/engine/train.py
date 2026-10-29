@@ -53,20 +53,32 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
-def build_model(cfg: dict, device: torch.device) -> BEVFusionDetector:
-    """Constroi o modelo a partir do config."""
+def build_model(cfg: dict, device: torch.device) -> nn.Module:
+    """Constroi o modelo a partir do config (Middle ou Early Fusion)."""
     model_cfg = cfg["model"]
     data_cfg = cfg["data"]
+    model_type = model_cfg.get("type", "middle")
 
-    model = BEVFusionDetector(
-        image_size=tuple(data_cfg["image_size"]),
-        bev_size=tuple(data_cfg["bev_size"]),
-        bev_range=tuple(data_cfg["bev_range"]),
-        backbone_out_channels=model_cfg["fusion"]["img_channels"],
-        radar_channels=data_cfg["radar_input_channels"],
-        fusion_out_channels=model_cfg["fusion"]["out_channels"],
-        pretrained_backbone=model_cfg["backbone"]["pretrained"],
-    )
+    if model_type == "early":
+        from src.models.early_detector import EarlyBEVFusionDetector
+        model = EarlyBEVFusionDetector(
+            image_size=tuple(data_cfg["image_size"]),
+            bev_size=tuple(data_cfg["bev_size"]),
+            bev_range=tuple(data_cfg["bev_range"]),
+            radar_channels=data_cfg["radar_input_channels"],
+            out_channels=model_cfg.get("head", {}).get("num_outputs", 1),
+            pretrained_backbone=model_cfg["backbone"]["pretrained"],
+        )
+    else:
+        model = BEVFusionDetector(
+            image_size=tuple(data_cfg["image_size"]),
+            bev_size=tuple(data_cfg["bev_size"]),
+            bev_range=tuple(data_cfg["bev_range"]),
+            backbone_out_channels=model_cfg["fusion"]["img_channels"],
+            radar_channels=data_cfg["radar_input_channels"],
+            fusion_out_channels=model_cfg["fusion"]["out_channels"],
+            pretrained_backbone=model_cfg["backbone"]["pretrained"],
+        )
 
     return model.to(device)
 
@@ -150,7 +162,7 @@ def compute_loss(
     radar_mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
-    Calcula BCE loss para segmentacao binaria BEV.
+    Calcula BCE loss para segmentacao binaria BEV. (BCE: métrica de erro entre valores reais e previstos)
     Aplica ponderacao para lidar com desbalanceamento (poucos pixels positivos).
     """
     # BCE com logits
@@ -170,11 +182,12 @@ def compute_loss(
 
 
 def train_one_epoch(
-    model: BEVFusionDetector,
+    model: nn.Module,
     dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
     scaler: GradScaler,
     device: torch.device,
+    cfg: Optional[dict] = None,
     use_amp: bool = True,
 ) -> Dict[str, float]:
     """Treina por uma epoch. Retorna metricas."""
@@ -182,8 +195,11 @@ def train_one_epoch(
     total_loss = 0.0
     n_batches = 0
 
+    bev_size = tuple(cfg["data"]["bev_size"]) if cfg else (128, 128)
+    bev_range = tuple(cfg["data"]["bev_range"]) if cfg else (-50.0, 50.0)
+
     for batch_idx, batch in enumerate(dataloader):
-        image = batch["image"].to(device)
+        image = batch["image"].to(device) # .to(device): transfere os dados para o dispositivo selecionado (CPU ou GPU)
         radar_points = batch["radar_points"].to(device)
         radar_mask = batch["radar_mask"].to(device)
         seg_gt = batch["bev_segmentation"].to(device)
@@ -195,28 +211,29 @@ def train_one_epoch(
             bev = radar_to_bev_grid(
                 radar_points[i],
                 radar_mask[i],
-                bev_size=tuple(cfg["data"]["bev_size"]),
-                bev_range=tuple(cfg["data"]["bev_range"]),
+                bev_size=bev_size,
+                bev_range=bev_range,
             )
             radar_bev_list.append(bev)
         radar_bev = torch.stack(radar_bev_list, dim=0).to(device)
 
+        # Limpeza dos Gradientes - Zera o gradiente do passo anterior
         optimizer.zero_grad()
 
         if use_amp and device.type == "cuda":
-            with autocast():
-                seg_logits = model(image, radar_bev)
-                loss = compute_loss(seg_logits, seg_gt)
-            scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            seg_logits = model(image, radar_bev)
-            loss = compute_loss(seg_logits, seg_gt)
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+            with autocast(): # usa ponto flutuante de menor precision (16 bits) para acelerar o treinamento
+                seg_logits = model(image, radar_bev) # processa o mapa RGB e o mapa BEV radar para gerar o mapa de probabilidade de ocupacao
+                loss = compute_loss(seg_logits, seg_gt) # calcula a perda
+            scaler.scale(loss).backward() # propaga os gradientes
+            scaler.unscale_(optimizer) # desfaz o unscale do gradiente
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0) # limita o tamanho dos gradientes
+            scaler.step(optimizer) # atualiza os pesos do modelo
+            scaler.update() # atualiza o scaler para o proximo passo
+        else: # se nao estiver usando AMP, usa ponto flutuante normal (32 bits)
+            seg_logits = model(image, radar_bev) # processa o mapa RGB e o mapa BEV radar para gerar o mapa de probabilidade de ocupacao
+            loss = compute_loss(seg_logits, seg_gt) # calcula a perda
+            loss.backward() # propaga os gradientes
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0) # limita o tamanho dos gradientes
             optimizer.step()
 
         total_loss += loss.item()
@@ -384,7 +401,7 @@ def train(config_path: str, dataroot: Optional[str] = None):
 
         # Treinar
         train_metrics = train_one_epoch(
-            model, train_loader, optimizer, scaler, device, use_amp
+            model, train_loader, optimizer, scaler, device, cfg, use_amp
         )
 
         # Validar

@@ -55,13 +55,13 @@ RADAR_RAW_CHANNELS = [
 class NuScenesFusionDataset(Dataset):
     """Dataset PyTorch para fusao Camera-Radar em BEV com nuScenes."""
 
-    def __init__(
+    def __init__( # Origem do 
         self,
         dataroot: str,
         version: str = "v1.0-mini",
         split: str = "train",
         train_ratio: float = 0.7,
-        image_size: Tuple[int, int] = (384, 672),
+        image_size: Tuple[int, int] = (384, 672), 
         bev_size: Tuple[int, int] = (128, 128),
         bev_range: Tuple[float, float] = (-50.0, 50.0),
         radar_max_points: int = 200,
@@ -197,7 +197,7 @@ class NuScenesFusionDataset(Dataset):
 
         # Filtrar pontos invalidos
         if n_points > 0:
-            # invalid_state == 0 significa ponto valido
+            # invalid_state == 0 significa ponto valido (ou inválido)
             valid_mask = points[14, :] == 0  # invalid_state channel
             points = points[:, valid_mask]
             n_points = points.shape[1]
@@ -245,53 +245,52 @@ class NuScenesFusionDataset(Dataset):
     def _load_bev_segmentation_gt(self, sample: dict) -> torch.Tensor:
         """
         Gera o ground truth de segmentacao BEV (mapa de ocupacao).
-        Para cada bounding box 3D, projetar o centro no grid BEV e marcar como 1.
+        Para cada bounding box 3D, converter para o referencial do ego vehicle,
+        projetar no grid BEV e marcar como 1.
         Retorna: Tensor[1, bev_h, bev_w]
         """
         bev_h, bev_w = self.bev_size
         bev_min, bev_max = self.bev_range
         grid = np.zeros((1, bev_h, bev_w), dtype=np.float32)
-
-        # Obter todas as anotacoes do sample
+        # 1. Obter anotacoes vinculadas a CAM_FRONT (estao no referencial da camera)
+        cam_token = sample["data"]["CAM_FRONT"]
         annotations = self.nusc.get_sample_data(
-            sample["data"]["CAM_FRONT"],
+            cam_token,
             box_vis_level=BoxVisibility.ANY,
         )
-        boxes: List[Box] = annotations[1]  # segundo retorno sao as boxes
-
+        boxes: List[Box] = annotations[1]
+        # 2. Obter calibracao extrinseca da camera para converter de volta ao Ego-Vehicle
+        sd_rec = self.nusc.get("sample_data", cam_token)
+        cs_rec = self.nusc.get("calibrated_sensor", sd_rec["calibrated_sensor_token"])
+        sensor_rot = Quaternion(cs_rec["rotation"])
+        sensor_trans = np.array(cs_rec["translation"])
         for box in boxes:
             # Filtrar apenas categorias suportadas
             if box.name not in self.category_mapping:
                 continue
-
-            # Centro da box em coordenadas do ego vehicle (mundo)
+            # 3. Converter da camera para o referencial do carro (Ego-Vehicle)
+            box.rotate(sensor_rot)
+            box.translate(sensor_trans)
+            
             cx, cy, cz = box.center
-
-            # Converter para pixel no grid BEV
-            # nuScenes: x = frente, y = esquerda
-            # Grid: col = eixo Y (lateral), row = eixo X (frente)
-            # Range: [bev_min, bev_max] metros
-            col = int(((cy - bev_min) / (bev_max - bev_min)) * bev_w)
+            # 4. Converter metros para indices de linha (X frontal) e coluna (Y lateral)
             row = int(((cx - bev_min) / (bev_max - bev_min)) * bev_h)
-
-            # Verificar limites
+            col = int(((cy - bev_min) / (bev_max - bev_min)) * bev_w)
+            # Verificar limites do grid
             if 0 <= col < bev_w and 0 <= row < bev_h:
                 grid[0, row, col] = 1.0
-
-                # Expandir ligeiramente para cobrir o tamango do objeto
-                # (raio baseado nas dimensoes da box)
-                wlh = box.wlh  # width, length, height
+                # Expandir com base nas dimensoes da box (wlh: width, length, height)
+                # wlh[0] = width (lateral Y), wlh[1] = length (longitudinal X)
+                wlh = box.wlh
                 radius_col = max(1, int((wlh[0] / 2) / (bev_max - bev_min) * bev_w))
                 radius_row = max(1, int((wlh[1] / 2) / (bev_max - bev_min) * bev_h))
-
                 r_min = max(0, row - radius_row)
                 r_max = min(bev_h, row + radius_row + 1)
                 c_min = max(0, col - radius_col)
                 c_max = min(bev_w, col + radius_col + 1)
-
                 grid[0, r_min:r_max, c_min:c_max] = 1.0
-
         return torch.from_numpy(grid)
+
 
     def get_camera_calibration(self, sample: dict) -> Dict[str, np.ndarray]:
         """

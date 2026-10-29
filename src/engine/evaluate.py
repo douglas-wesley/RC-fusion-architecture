@@ -75,7 +75,7 @@ class BEVMetrics:
 
 @torch.no_grad()
 def evaluate(
-    model: BEVFusionDetector,
+    model: nn.Module,
     dataloader: DataLoader,
     device: torch.device,
     cfg: dict,
