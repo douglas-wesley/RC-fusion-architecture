@@ -50,14 +50,16 @@ def radar_to_bev_grid(
     pts = radar_points[:, valid]
 
     x = pts[0]    # profundidade (frente do carro)
-    y = pts[1]    # lateral (esquerda positiva)
+    # Lateral: no nuScenes Ego, +Y e Esquerda e -Y e Direita.
+    # Invertemos o sinal (-pts[1]) para que no Grid: +Y seja Direita e -Y seja Esquerda,
+    # correspondendo com a camera frontal e a perspectiva do motorista.
+    y = -pts[1]
     rcs = pts[3]  # radar cross section
-    vx = pts[4]   # velocidade x
-    vy = pts[5]   # velocidade y
+    vx = pts[4]   # velocidade x (frente)
+    vy = -pts[5]  # velocidade y (lateral invertida com o eixo)
 
-    # Converter coordenadas do mundo para indices do grid
-    # nuScenes: x = frente, y = esquerda
-    # Grid: row = eixo X (frente), col = eixo Y (esquerda)
+    # Converter coordenadas metricas para indices do grid BEV
+    # row = eixo X (frente), col = eixo Y (lateral: esquerda negativa, direita positiva)
     col = ((y - bev_min) / (bev_max - bev_min) * bev_w).long()
     row = ((x - bev_min) / (bev_max - bev_min) * bev_h).long()
 

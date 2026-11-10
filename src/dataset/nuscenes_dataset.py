@@ -206,6 +206,12 @@ class NuScenesFusionDataset(Dataset):
         # x(0), y(1), z(2), rcs(5), vx(6), vy(7) + 4 derivados
         # Total: 10 canais (x, y, z, rcs, vx, vy, vx_comp, vy_comp, distance, azimuth)
         if n_points > 0:
+            # Aplicar calibracao extrinseca: converter do referencial do sensor para o Ego-Vehicle
+            cs_rec = self.nusc.get("calibrated_sensor", sd_rec["calibrated_sensor_token"])
+            rot_matrix = Quaternion(cs_rec["rotation"]).rotation_matrix
+            trans = np.array(cs_rec["translation"]).reshape(3, 1)
+            points[:3, :] = (rot_matrix @ points[:3, :] + trans).astype(np.float32)
+
             x = points[0:1, :]   # [1, N]
             y = points[1:2, :]
             z = points[2:3, :]
@@ -246,49 +252,63 @@ class NuScenesFusionDataset(Dataset):
         """
         Gera o ground truth de segmentacao BEV (mapa de ocupacao).
         Para cada bounding box 3D, converter para o referencial do ego vehicle,
-        projetar no grid BEV e marcar como 1.
+        projetar no grid BEV e desenhar o poligono rotacionado com cv2.fillPoly.
         Retorna: Tensor[1, bev_h, bev_w]
         """
         bev_h, bev_w = self.bev_size
         bev_min, bev_max = self.bev_range
-        grid = np.zeros((1, bev_h, bev_w), dtype=np.float32)
-        # 1. Obter anotacoes vinculadas a CAM_FRONT (estao no referencial da camera)
+        canvas = np.zeros((bev_h, bev_w), dtype=np.float32)
+
+        # 1. Obter a pose do ego correspondente ao frame da CAM_FRONT
         cam_token = sample["data"]["CAM_FRONT"]
-        annotations = self.nusc.get_sample_data(
-            cam_token,
-            box_vis_level=BoxVisibility.ANY,
-        )
-        boxes: List[Box] = annotations[1]
-        # 2. Obter calibracao extrinseca da camera para converter de volta ao Ego-Vehicle
         sd_rec = self.nusc.get("sample_data", cam_token)
-        cs_rec = self.nusc.get("calibrated_sensor", sd_rec["calibrated_sensor_token"])
-        sensor_rot = Quaternion(cs_rec["rotation"])
-        sensor_trans = np.array(cs_rec["translation"])
-        for box in boxes:
-            # Filtrar apenas categorias suportadas
-            if box.name not in self.category_mapping:
+        ego_pose = self.nusc.get("ego_pose", sd_rec["ego_pose_token"])
+
+        # 2. Iterar sobre as anotacoes de objetos da cena
+        for ann_token in sample["anns"]:
+            ann = self.nusc.get("sample_annotation", ann_token)
+
+            # Filtrar apenas as categorias configuradas em self.category_mapping
+            if ann["category_name"] not in self.category_mapping:
                 continue
-            # 3. Converter da camera para o referencial do carro (Ego-Vehicle)
-            box.rotate(sensor_rot)
-            box.translate(sensor_trans)
-            
-            cx, cy, cz = box.center
-            # 4. Converter metros para indices de linha (X frontal) e coluna (Y lateral)
-            row = int(((cx - bev_min) / (bev_max - bev_min)) * bev_h)
-            col = int(((cy - bev_min) / (bev_max - bev_min)) * bev_w)
-            # Verificar limites do grid
-            if 0 <= col < bev_w and 0 <= row < bev_h:
-                grid[0, row, col] = 1.0
-                # Expandir com base nas dimensoes da box (wlh: width, length, height)
-                # wlh[0] = width (lateral Y), wlh[1] = length (longitudinal X)
-                wlh = box.wlh
-                radius_col = max(1, int((wlh[0] / 2) / (bev_max - bev_min) * bev_w))
-                radius_row = max(1, int((wlh[1] / 2) / (bev_max - bev_min) * bev_h))
-                r_min = max(0, row - radius_row)
-                r_max = min(bev_h, row + radius_row + 1)
-                c_min = max(0, col - radius_col)
-                c_max = min(bev_w, col + radius_col + 1)
-                grid[0, r_min:r_max, c_min:c_max] = 1.0
+
+            # Ignorar objetos com status de visibilidade nula/invisivel
+            if ann["visibility_token"] == "1":
+                continue
+
+            # Instanciar Box 3D no referencial global e converter para o referencial do Ego
+            box = Box(ann["translation"], ann["size"], Quaternion(ann["rotation"]))
+            box.translate(-np.array(ego_pose["translation"]))
+            box.rotate(Quaternion(ego_pose["rotation"]).inverse)
+
+            # 1. Filtrar pelo Campo de Visao Frontal (FOV):
+            # A Câmera Frontal e o Radar Frontal cobrem apenas o hemisferio frontal.
+            # Descartar objetos traseiros (X <= 0.5m) e fora da abertura angular (> 45 graus)
+            cx, cy, _ = box.center
+            if cx < 0.5:
+                continue
+            azimuth_deg = np.rad2deg(np.arctan2(abs(cy), cx))
+            if azimuth_deg > 45.0:
+                continue
+
+            # 2. Extrair os 4 vertices da base no solo na ordem perimetrica correta (BEVCar)
+            # Indices no nuScenes: 4 (Front-Left), 5 (Front-Right), 6 (Rear-Right), 7 (Rear-Left)
+            corners_bottom = box.corners()[:2, [4, 5, 6, 7]]
+            x_pts = corners_bottom[0]
+            # No nuScenes Ego: +Y e Esquerda, -Y e Direita.
+            # Invertemos o sinal (-Y) para que no Grid/BEV: Esquerda seja -Y e Direita seja +Y,
+            # coincidindo 100% com a imagem da camera frontal (visao do motorista).
+            y_pts = -corners_bottom[1]
+
+            # Discretizar coordenadas metricas para indices de linha (X) e coluna (Y) do grid BEV
+            rows = np.round(((x_pts - bev_min) / (bev_max - bev_min)) * bev_h).astype(np.int32)
+            cols = np.round(((y_pts - bev_min) / (bev_max - bev_min)) * bev_w).astype(np.int32)
+
+            # Desenhar poligono solido com a orientacao (yaw) exata do veiculo
+            poly_pts = np.stack([cols, rows], axis=1)
+            cv2.fillPoly(canvas, [poly_pts], 1.0)
+
+        grid = np.expand_dims(canvas, axis=0)
         return torch.from_numpy(grid)
 
 
