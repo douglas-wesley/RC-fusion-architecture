@@ -60,7 +60,13 @@ def build_model(cfg: dict, device: torch.device) -> nn.Module:
     model_type = model_cfg.get("type", "middle")
 
     if model_type == "early":
-        from src.models.early_detector import EarlyBEVFusionDetector
+        try:
+            from src.models.early_detector import EarlyBEVFusionDetector
+        except ImportError as e:
+            raise ImportError(
+                "Módulo 'early_detector' não encontrado. "
+                "Para utilizar a arquitetura padrão Middle Fusion, defina model.type como 'middle' no arquivo de configuração."
+            ) from e
         model = EarlyBEVFusionDetector(
             image_size=tuple(data_cfg["image_size"]),
             bev_size=tuple(data_cfg["bev_size"]),
@@ -156,29 +162,63 @@ def build_optimizer(model: nn.Module, cfg: dict):
     return optimizer, scheduler
 
 
+def soft_dice_loss(
+    pred_probs: torch.Tensor,
+    targets: torch.Tensor,
+    smooth: float = 1e-6
+) -> torch.Tensor:
+    """
+    Calcula a Soft Dice Loss para segmentacao binaria em BEV.
+    Otimiza diretamente a sobreposicao espacial (proxima ao IoU).
+    
+    Args:
+        pred_probs: Probabilidades pos-sigmoid com shape [B, 1, H, W] ou [B, H, W]
+        targets: Mascara real binaria (0.0 ou 1.0) com mesmo shape
+        smooth: Constante para estabilidade numerica contra divisao por zero
+    """
+    # Achata as dimensoes espaciais [B, H*W] mantendo o batch separado
+    pred_flat = pred_probs.contiguous().view(pred_probs.shape[0], -1)
+    target_flat = targets.contiguous().view(targets.shape[0], -1)
+    
+    # Intersecao e uniao continua
+    intersection = (pred_flat * target_flat).sum(dim=1)
+    cardinality = (pred_flat ** 2).sum(dim=1) + (target_flat ** 2).sum(dim=1)
+    
+    dice_score = (2.0 * intersection + smooth) / (cardinality + smooth)
+    dice_loss = 1.0 - dice_score
+    
+    return dice_loss.mean()
+    
 def compute_loss(
     seg_logits: torch.Tensor,
     seg_gt: torch.Tensor,
     radar_mask: Optional[torch.Tensor] = None,
+    pos_weight_val: float = 8.0,
+    dice_weight: float = 1.0,
+    bce_weight: float = 1.0,
 ) -> torch.Tensor:
     """
-    Calcula BCE loss para segmentacao binaria BEV. (BCE: métrica de erro entre valores reais e previstos)
-    Aplica ponderacao para lidar com desbalanceamento (poucos pixels positivos).
+    Calcula a perda combinada BCE Ponderada + Soft Dice Loss.
+    
+    - BCE Ponderada: Fornece gradientes estaveis pixel a pixel.
+    - Soft Dice: Impede o modelo de chutar tudo zero e foca na forma das caixas.
     """
-    # BCE com logits
-    bce = nn.functional.binary_cross_entropy_with_logits(
-        seg_logits, seg_gt, reduction="none"
+    # 1. Ponderacao da BCE para pixels positivos
+    pos_weight = torch.tensor([pos_weight_val], device=seg_logits.device)
+    bce_loss = nn.functional.binary_cross_entropy_with_logits(
+        seg_logits,
+        seg_gt,
+        pos_weight=pos_weight
     )
-
-    # Ponderacao: pixels positivos recebem peso maior
-    pos_weight = torch.tensor([5.0], device=seg_logits.device)
-    pos_mask = seg_gt > 0.5
-    neg_mask = ~pos_mask
-
-    loss = (bce * pos_mask.float()).sum() * pos_weight + (bce * neg_mask.float()).sum()
-    loss = loss / seg_gt.numel()
-
-    return loss
+    
+    # 2. Soft Dice Loss (aplica sigmoid nos logits)
+    pred_probs = torch.sigmoid(seg_logits)
+    d_loss = soft_dice_loss(pred_probs, seg_gt)
+    
+    # 3. Perda Total Ponderada
+    total_loss = (bce_weight * bce_loss) + (dice_weight * d_loss)
+    
+    return total_loss
 
 
 def train_one_epoch(

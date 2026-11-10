@@ -45,6 +45,7 @@ data:
 
 # ── Modelo ───────────────────────────────────────────────────────────────────
 model:
+  type: "middle"                         # middle (padrao) | early
   backbone:
     name: "mobilenet_v2"                 # mobilenet_v2 | resnet18
     pretrained: true
@@ -67,16 +68,14 @@ model:
 # ── Treinamento ──────────────────────────────────────────────────────────────
 training:
   batch_size: 4
-  epochs: 50
-  lr: 0.001
+  epochs: 30
+  lr: 0.0005
   weight_decay: 0.0001
   scheduler: "cosine"                    # cosine | step
   step_size: 20
   step_gamma: 0.1
   early_stopping_patience: 10
-  seed: 42
-
-  # Mixed precision ( economia de memoria GPU )
+  seed: 40
   use_amp: true
 
   # Checkpoints
